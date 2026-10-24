@@ -1,0 +1,119 @@
+name: Axymorrsen optimized KO + module
+on:
+  push:
+    branches: ["feature/axymorrsen-ko-opt-zhcn"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Regression suite
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          # Upstream test-fixture portability issues do not affect kernel objects.
+          sed -i 's/\bnullptr\b/NULL/g' scripts/hosttest/linux/sched.h
+          sed -i '/^#define pr_warn(\.\.\.)/a #define pr_err(...) ((void)0)' scripts/shadow_host_test.c
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("scripts/shadow_host_test.c")
+          s = p.read_text()
+          anchor = 'int main(int argc, char **argv)\\n{\\n'
+          assert s.count(anchor) == 1, "unexpected shadow fixture"
+          s = s.replace(anchor, anchor + '    g_kern_path = fake_kern_path;\\n    g_path_put = (void (*)(const struct path *))path_put;\\n')
+          p.write_text(s)
+          PY
+          bash scripts/run-hosttest.sh
+      - name: WebUI, package and static verification
+        run: |
+          set -euo pipefail
+          for f in module/*.sh; do sh -n "$f"; done
+          node --check module/webroot/app.js
+          node --check module/webroot/i18n.js
+          node --check module/webroot/help.js
+          if test -f module/webroot/zh-CN.js; then
+            node --check module/webroot/zh-CN.js
+            node --check module/webroot/help-zh-CN.js
+          fi
+          node scripts/test-webui-i18n.cjs
+          node scripts/test-webui-help.cjs
+          python3 scripts/test-manual-inject.py
+          python3 scripts/test-module-abi.py
+
+  ko:
+    name: KO ${{ matrix.kmi }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}-20260828
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi: [android12-5.10, android13-5.10, android13-5.15, android14-5.15, android14-6.1, android15-6.6, android16-6.12, android17-6.18]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Cross compile
+        run: |
+          set -euo pipefail
+          KDIR="/opt/ddk/kdir/${{ matrix.kmi }}"
+          test -f "$KDIR/Makefile"
+          python3 scripts/restore-modpost.py "/opt/ddk/src/${{ matrix.kmi }}"
+          test -s "$KDIR/Module.symvers"
+          make -C "$KDIR" ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare
+          stage="$RUNNER_TEMP/stage/${{ matrix.kmi }}"
+          mkdir -p "$stage" out
+          for f in src/*; do ln -sfn "$PWD/$f" "$stage/$(basename "$f")"; done
+          make -C "$KDIR" ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- M="$stage" modules
+          llvm-strip -d "$stage/hma_uidfake.ko" || true
+          llvm-readelf -h "$stage/hma_uidfake.ko" | grep AArch64
+          cp "$stage/hma_uidfake.ko" "out/${{ matrix.kmi }}_arm64_hma_uidfake.ko"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ko-${{ matrix.kmi }}
+          path: out/*.ko
+          if-no-files-found: error
+
+  package:
+    needs: [tests, ko]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ko-*
+          path: optimized
+          merge-multiple: true
+      - name: Assemble full package from v0.3.16
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 4 --retry-all-errors -o original.zip \
+            https://github.com/Mobilelegends74/hma-uidfake/releases/download/v0.3.16/hma-uidfake-fork-0.3.16-test.zip
+          mkdir -p packed dist
+          (cd packed && unzip -q ../original.zip)
+          # All module scripts/UI/config from this fork, not stale upstream files.
+          cp -a module/. packed/
+          test "$(find optimized -maxdepth 1 -name '*.ko' | wc -l)" -eq 8
+          for f in optimized/*.ko; do cp "$f" "packed/ko/$(basename "$f")"; done
+          # Preserve original unsupported vendor special build, with disclosure.
+          test -s packed/ko/android16-6.12-oneplus-6.12.38_arm64_hma_uidfake.ko
+          printf '8 generic KO rebuilt. OnePlus 6.12.38 original KO is unmodified. Android device loading is not verified by GitHub Actions.\n' > packed/OPTIMIZATION_STATUS.txt
+          (cd packed && zip -qr ../dist/HMA_UIDFake_0.3.16_Axymorrsen_KOOpt.zip .)
+          unzip -t dist/*.zip
+          test "$(unzip -Z1 dist/*.zip | grep -c '^ko/.*\.ko$')" -eq 9
+          (cd dist && sha256sum *.zip > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hma-uidfake-optimized-full-module
+          path: dist/
+          if-no-files-found: error
