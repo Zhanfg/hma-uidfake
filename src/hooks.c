@@ -47,6 +47,7 @@ void uidfake_status_set_hooks(unsigned int native, unsigned int compat)
 {
 	g_status.native = native;
 	g_status.compat = compat;
+	g_status.flags &= ~(KAUX_F_NATIVE | KAUX_F_COMPAT);
 	if (native == g_status.native_expected)
 		g_status.flags |= KAUX_F_NATIVE;
 	if (compat == g_status.compat_expected)
@@ -77,6 +78,7 @@ void uidfake_status_set_apks(unsigned int inodes, unsigned int expected,
 	 */
 	g_status.apk_failed_total += failed;
 	g_status.apk_updates++;
+	g_status.flags &= ~KAUX_F_APKS;
 	if (failed == 0)
 		g_status.flags |= KAUX_F_APKS;
 }
@@ -833,10 +835,8 @@ void hooks_remove(void)
 	/* The apk inodes are ours whatever the table did: put them back first. */
 	uidfake_apk_remove();
 
-	/* nothing was patched means nothing to tear down: there is no fallback */
-	if (!main_table)
-		return;
-
+	/* An LSM hook can be live even when syscall table installation failed. */
+	if (main_table) {
 	unpatch_entries(main_table, g_hook, ARRAY_SIZE(g_hook));
 	if (g_lsm_failed) {
 #ifdef CONFIG_COMPAT
@@ -849,7 +849,7 @@ void hooks_remove(void)
 	compat_table = NULL;
 #endif
 	main_table = NULL;
-
-	/* the identity changes stay covered until the last moment */
+	}
+	/* Always uninstall the LSM hook, even after partial initialization. */
 	uidfake_lsm_remove();
 }

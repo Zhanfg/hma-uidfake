@@ -56,12 +56,26 @@ static int __init uidfake_init(void)
 
 	if (ret)
 		return ret;
-
 	uidfake_debug_init(uidfake_debug);
-
-	netlink_init();
-	pr_info("uidfake: ready (%d hook(s))\n", hooks_install());
+	ret = netlink_init();
+	if (ret)
+		goto err_debug;
+	if (hooks_install() != 1) {
+		ret = -ENODEV;
+		goto err_hooks;
+	}
+	pr_info("uidfake: ready (hooks verified)\n");
 	return 0;
+
+err_hooks:
+	hooks_remove();
+	netlink_exit();
+err_debug:
+	cancel_delayed_work_sync(&uidfake_debug_work);
+	if (UF_DEBUG_ON())
+		static_branch_disable(&uidfake_debug_key);
+	policy_free();
+	return ret;
 }
 
 static void __exit uidfake_exit(void)

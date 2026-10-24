@@ -10,6 +10,7 @@
 #include <linux/mutex.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/version.h> /* LINUX_VERSION_CODE for the resv_start_op guard */
 #include <linux/crc32.h>
 #include <linux/string.h>
@@ -90,18 +91,6 @@ static int kaux_set_begin(struct sk_buff *skb, struct genl_info *info)
 
 	mutex_lock(&g_staged_lock);
 
-	/*
-	 * The staging buffer is allocated on the first upload, not at load: it is
-	 * megabytes now, and the module is loaded while /data is barely there.
-	 */
-	if (g_staged == NULL)
-		g_staged = kcalloc(KAUX_STAGED_BYTES / sizeof(*g_staged),
-				   sizeof(*g_staged), GFP_KERNEL);
-	if (g_staged == NULL) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
 	if (kaux_blob(info, &p, &len) || len < sizeof(*b)) {
 		rc = -EINVAL;
 		goto out;
@@ -112,7 +101,16 @@ static int kaux_set_begin(struct sk_buff *skb, struct genl_info *info)
 		rc = -EINVAL;
 		goto out;
 	}
+	{
+		void *next = kvzalloc(b->bytes, GFP_KERNEL);
 
+		if (!next) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		kvfree(g_staged);
+		g_staged = next;
+	}
 	g_staged_kind = b->kind;
 	g_staged_total = b->bytes;
 	g_staged_len = 0;
@@ -142,7 +140,8 @@ static int kaux_set_page(struct sk_buff *skb, struct genl_info *info)
 		rc = -EINVAL;
 		goto out;
 	}
-	if (g_staged_total == 0 || offset != g_staged_len ||
+	if (g_staged == NULL || g_staged_total == 0 ||
+	    offset != g_staged_len ||
 	    bytes > g_staged_total - g_staged_len) {
 		rc = -EINVAL;
 		goto out;
@@ -175,22 +174,14 @@ static int kaux_set_commit(struct sk_buff *skb, struct genl_info *info)
 		rc = -EINVAL;
 		goto out;
 	}
-	/*
-	 * The blob is moved out of the staging buffer and applied with the lock
-	 * dropped. Applying it resolves paths and touches inodes, and that can
-	 * sleep: an apply inside this lock blocks the next page of the next upload,
-	 * which is what turned an install into a hang.
+	/* Transfer ownership: no second 2MiB allocation or memcpy.
+	 * Applying may sleep, so release the staging lock before calling it.
+	 * g_apply_lock serializes commits while next upload uses fresh staging.
 	 */
-	if (g_apply == NULL)
-		g_apply = kcalloc(KAUX_STAGED_BYTES / sizeof(*g_apply),
-				  sizeof(*g_apply), GFP_KERNEL);
-	if (g_apply == NULL) {
-		rc = -ENOMEM;
-		goto out;
-	}
 	kind = g_staged_kind;
 	bytes = g_staged_total;
-	memcpy(g_apply, g_staged, bytes);
+	g_apply = g_staged;
+	g_staged = NULL;
 	g_staged_total = 0;
 	g_staged_len = 0;
 
@@ -200,13 +191,15 @@ out:
 		if (kind == KAUX_KIND_POLICY) {
 			pr_info("uidfake: netlink policy: %u pair(s) in pages\n",
 				bytes / 8u);
-			policy_apply(g_apply, bytes / 8u);
+			rc = policy_apply(g_apply, bytes / 8u);
 		} else {
 			pr_info("uidfake: netlink apks: %u byte(s) in pages\n",
 				bytes);
-			uidfake_apk_apply(g_apply, bytes);
+			rc = uidfake_apk_apply(g_apply, bytes);
 		}
 	}
+	kvfree(g_apply);
+	g_apply = NULL;
 	mutex_unlock(&g_apply_lock);
 	return rc;
 }
@@ -300,8 +293,8 @@ int netlink_init(void)
 void netlink_exit(void)
 {
 	genl_unregister_family(&kaux_family);
-	kfree(g_staged);
-	kfree(g_apply);
+	kvfree(g_staged);
+	kvfree(g_apply);
 	g_staged = NULL;
 	g_apply = NULL;
 }

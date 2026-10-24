@@ -66,7 +66,7 @@ struct uid_pair { /* 8 bytes: POLICY_WAY of them fill one cache line */
 	u16 mask_id;
 };
 
-void policy_apply(const u32 *pairs, u32 npairs);
+int policy_apply(const u32 *pairs, u32 npairs);
 u32 policy_live_pairs(void); /* number of rules in the currently published RCU snapshot */
 
 /*
