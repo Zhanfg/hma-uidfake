@@ -19,6 +19,8 @@ jobs:
       - name: Regression suite
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nlohmann-json3-dev libtinyxml2-dev
           mkdir -p build
           # Upstream test-fixture portability issues do not affect kernel objects.
           sed -i 's/\bnullptr\b/NULL/g' scripts/hosttest/linux/sched.h
