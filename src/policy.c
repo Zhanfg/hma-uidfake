@@ -633,7 +633,7 @@ static void policy_publish(struct policy *np)
 	policy_release(old);
 }
 
-void policy_apply(const u32 *pairs, u32 npairs)
+int policy_apply(const u32 *pairs, u32 npairs)
 {
 	struct policy *np;
 	struct layout l = {};
