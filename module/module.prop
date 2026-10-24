@@ -1,8 +1,8 @@
 id=hma-uidfake
-name=HMA UID Fake fork [TEST]
+name=HMA UID Fake fork [中文 WebUI]
 # Fallback only: the build replaces these two with the git tag and the short hash.
-version=0.3.16-test-fork
-versionCode=3016
+version=0.3.16-AXY-opt1-zhCN
+versionCode=3017
 author=Kodatemitsuru, Mobilelegends74
-description=❌ Not working
+description=HMA UIDFake KO optimized candidate | 简体中文 WebUI | 真机尚未验证
 updateJson=https://raw.githubusercontent.com/Mobilelegends74/hma-uidfake/main/update.json
