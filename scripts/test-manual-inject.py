@@ -56,15 +56,15 @@ with tempfile.TemporaryDirectory(prefix='uidfake-manual-test-') as tmp:
     result = run('android12-5.10')
     assert result.returncode == 1, result.stdout + result.stderr
     assert '[KERNEL_REJECTED]' in result.stdout
+    assert (mod / 'calls').read_text().splitlines() == ['manual-load ' + str(mod / 'ko/android12-5.10_arm64_hma_uidfake.ko')]
+    assert '[KERNEL_REJECTED]' in (mod / 'state/load.reason').read_text()
+    assert '[MANUAL_DIRECT]' not in (mod / 'state/load.reason').read_text()
+    assert not (mod / 'state/selected-kmi').exists()
     files[0].write_bytes(b'tampered')
     result = run('android12-5.10')
     assert '[KO_INTEGRITY]' in result.stdout
     assert len((mod / 'calls').read_text().splitlines()) == 1
     files[0].write_bytes(original)
-    assert (mod / 'calls').read_text().splitlines() == ['manual-load ' + str(mod / 'ko/android12-5.10_arm64_hma_uidfake.ko')]
-    assert '[KERNEL_REJECTED]' in (mod / 'state/load.reason').read_text()
-    assert '[MANUAL_DIRECT]' not in (mod / 'state/load.reason').read_text()
-    assert not (mod / 'state/selected-kmi').exists()
     # Busy/already-loaded must not call the kernel helper a second time.
     (bin_dir / 'lsmod').write_text('#!/bin/sh\necho "hma_uidfake 123 0"\n')
     assert '[ALREADY_LOADED]' in run('android14-6.1').stdout
