@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise only shell doubles; never invoke the actual kernel loader."""
+import hashlib
 import os
 import pathlib
 import subprocess
@@ -23,6 +24,20 @@ with tempfile.TemporaryDirectory(prefix='uidfake-manual-test-') as tmp:
     (mod / 'manual-inject.sh').write_text(source)
     (mod / 'load.sh').write_text(pathlib.Path('module/load.sh').read_text())
     (mod / 'module.prop').write_text('id=hma-uidfake\ndescription=initial\n')
+    # The installer now ships a SHA256 manifest. The mocked loader must not
+    # be invoked unless the candidate matches the manifest exactly.
+    (mod / 'ko').mkdir()
+    original = b'mock-kernel-module-bytes-only'
+    files = [
+        mod / 'ko' / (k + '_arm64_hma_uidfake.ko')
+        for k in ('android12-5.10', 'android14-6.1')
+    ]
+    for candidate in files:
+        candidate.write_bytes(original)
+    manifest_hash = hashlib.sha256(original).hexdigest()
+    (mod / 'ko/SHA256SUMS').write_text(
+        ''.join(f'{manifest_hash}  ko/{candidate.name}\n' for candidate in files)
+    )
     for name, body in {
         'id': 'echo 0', 'lsmod': ':', 'nohup': 'exit 0',
     }.items():
@@ -41,6 +56,11 @@ with tempfile.TemporaryDirectory(prefix='uidfake-manual-test-') as tmp:
     result = run('android12-5.10')
     assert result.returncode == 1, result.stdout + result.stderr
     assert '[KERNEL_REJECTED]' in result.stdout
+    files[0].write_bytes(b'tampered')
+    result = run('android12-5.10')
+    assert '[KO_INTEGRITY]' in result.stdout
+    assert len((mod / 'calls').read_text().splitlines()) == 1
+    files[0].write_bytes(original)
     assert (mod / 'calls').read_text().splitlines() == ['manual-load ' + str(mod / 'ko/android12-5.10_arm64_hma_uidfake.ko')]
     assert '[KERNEL_REJECTED]' in (mod / 'state/load.reason').read_text()
     assert '[MANUAL_DIRECT]' not in (mod / 'state/load.reason').read_text()
