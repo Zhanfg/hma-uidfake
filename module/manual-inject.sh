@@ -18,6 +18,11 @@ if [ -d /sys/module/hma_uidfake ] || lsmod | grep -q '^hma_uidfake '; then
   echo '[ALREADY_LOADED] Module is present; no stacking or hot replacement'
   exit 1
 fi
+if ! uidfake_check_ko "$moddir" "${candidate}_arm64_hma_uidfake.ko"; then
+  uidfake_status "$moddir" '[KO_INTEGRITY] The selected KO differs from ko/SHA256SUMS. Reinstall the complete ZIP.'
+  echo '[KO_INTEGRITY] Refusing to load mixed-version or damaged KO'
+  exit 1
+fi
 printf '%s\n' "$candidate" > "$moddir/state/manual-requested-kmi"
 # Explicit manual choice skips OUR KMI/ABI preflight completely. The kernel
 # loader still decides whether it accepts the unchanged bytes (flags=0).
