@@ -60,8 +60,15 @@ static int __init uidfake_init(void)
 	ret = netlink_init();
 	if (ret)
 		goto err_debug;
-	if (hooks_install() != 1) {
-		ret = -ENODEV;
+	/*
+	 * Preserve the exact kernel hook failure rather than turning every
+	 * incompatibility into ENODEV.  The loader displays the returned errno,
+	 * which is essential when Android denies access to printk/dmesg.
+	 */
+	ret = hooks_install();
+	if (ret != 1) {
+		if (ret >= 0)
+			ret = -ENODEV;
 		goto err_hooks;
 	}
 	pr_info("uidfake: ready (hooks verified)\n");
