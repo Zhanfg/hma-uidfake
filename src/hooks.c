@@ -617,8 +617,12 @@ static uidfake_syscall_t *find_slot(uidfake_syscall_t *table,
 	for (i = 0; i < nwant; i++)
 		if (want[i])
 			found = true;
-	if (!found)
+	if (!found) {
+		/* Do not print resolved addresses on production phones. */
+		pr_err("uidfake: no callable symbol resolved for %s (syscall hook not installed)\n",
+		       e->sym ? e->sym : (e->sym32 ? e->sym32 : "unknown"));
 		return NULL;
+	}
 
 	/* the number is only the first guess, and only when it agrees */
 	if (e->nr < UF_TABLE_SCAN) {
@@ -639,6 +643,8 @@ static uidfake_syscall_t *find_slot(uidfake_syscall_t *table,
 			}
 		}
 	}
+	pr_err("uidfake: symbol resolved but no matching syscall table slot for %s; refusing unsafe patch\n",
+	       e->sym ? e->sym : (e->sym32 ? e->sym32 : "unknown"));
 	return NULL;
 }
 
