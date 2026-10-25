@@ -47,6 +47,7 @@ void uidfake_status_set_hooks(unsigned int native, unsigned int compat)
 {
 	g_status.native = native;
 	g_status.compat = compat;
+	g_status.flags &= ~(KAUX_F_NATIVE | KAUX_F_COMPAT);
 	if (native == g_status.native_expected)
 		g_status.flags |= KAUX_F_NATIVE;
 	if (compat == g_status.compat_expected)
@@ -77,6 +78,7 @@ void uidfake_status_set_apks(unsigned int inodes, unsigned int expected,
 	 */
 	g_status.apk_failed_total += failed;
 	g_status.apk_updates++;
+	g_status.flags &= ~KAUX_F_APKS;
 	if (failed == 0)
 		g_status.flags |= KAUX_F_APKS;
 }
@@ -615,8 +617,12 @@ static uidfake_syscall_t *find_slot(uidfake_syscall_t *table,
 	for (i = 0; i < nwant; i++)
 		if (want[i])
 			found = true;
-	if (!found)
+	if (!found) {
+		/* Do not print resolved addresses on production phones. */
+		pr_err("uidfake: no callable symbol resolved for %s (syscall hook not installed)\n",
+		       e->sym ? e->sym : (e->sym32 ? e->sym32 : "unknown"));
 		return NULL;
+	}
 
 	/* the number is only the first guess, and only when it agrees */
 	if (e->nr < UF_TABLE_SCAN) {
@@ -637,6 +643,8 @@ static uidfake_syscall_t *find_slot(uidfake_syscall_t *table,
 			}
 		}
 	}
+	pr_err("uidfake: symbol resolved but no matching syscall table slot for %s; refusing unsafe patch\n",
+	       e->sym ? e->sym : (e->sym32 ? e->sym32 : "unknown"));
 	return NULL;
 }
 
@@ -706,13 +714,41 @@ static void unpatch_entries(uidfake_syscall_t *table, struct hook_entry *e,
 	}
 }
 
+/*
+ * Module init returns only one errno, even on vendor kernels that deny
+ * dmesg/logcat. Preserve the identity of each REQUIRED native syscall slot
+ * without weakening the hook requirement. Each value means "which stage
+ * returned this errno"; it is a clue, not proof of why a symbol was absent.
+ *
+ * 38 ENOSYS: getpriority, 42 ENOMSG: setpriority,
+ * 61 ENODATA: ioprio_get, 126 ENOKEY: ioprio_set.
+ * A kernel-side module-loader failure can independently use these codes.
+ */
+static int uf_missing_native_slot_error(unsigned int slot)
+{
+	switch (slot) {
+	case 0:
+		return -ENOSYS;
+	case 1:
+		return -ENOMSG;
+	case 2:
+		return -ENODATA;
+	case 3:
+		return -ENOKEY;
+	default:
+		return -ENOENT;
+	}
+}
+
 static int patch_tables(void)
 {
 	unsigned long table = uidfake_lookup("sys_call_table");
 	unsigned int n;
 
-	if (!table)
-		return -ENOENT;
+	if (!table) {
+		pr_err("uidfake: sys_call_table symbol unavailable\n");
+		return -ESRCH;
+	}
 	/* Real addresses go behind the debug key: dmesg is readable on plenty of devices. */
 	if (UF_DEBUG_ON())
 		pr_info("uidfake: sys_call_table=%px locator check: find_user=%px linked=%px\n",
@@ -725,10 +761,20 @@ static int patch_tables(void)
 #endif
 
 	main_table = (uidfake_syscall_t *)table;
+	uidfake_status_note(0);
 	n = patch_entries(main_table, g_hook, ARRAY_SIZE(g_hook), true);
 	if (n != ARRAY_SIZE(g_hook)) {
+		/*
+		 * n is the first required native entry that was not installed.
+		 * Distinct errno values permit diagnosis even with kmsg disabled.
+		 */
+		int cause = g_status.last_error == -ENOENT ?
+			uf_missing_native_slot_error(n) : -EIO;
+
 		unpatch_entries(main_table, g_hook, n);
-		return -EIO;
+		pr_err("uidfake: required native hook installation failed: %d\n",
+		       cause);
+		return cause;
 	}
 	pr_info("uidfake: %u uid syscall(s) hooked in sys_call_table\n", n);
 	uidfake_status_set_hooks(n, 0);
@@ -788,8 +834,12 @@ static int patch_tables(void)
 
 int hooks_install(void)
 {
-	if (uidfake_patch_init())
-		return 0;
+	int ret = uidfake_patch_init();
+
+	if (ret) {
+		pr_err("uidfake: patch backend setup failed: %d\n", ret);
+		return ret;
+	}
 
 	/*
 	 * Where the kernel hands both creds over at the commit, that hook is what the
@@ -815,17 +865,18 @@ int hooks_install(void)
 		}
 	}
 
-	if (!patch_tables()) {
+	ret = patch_tables();
+	if (!ret) {
 		/*
-     * The vendor hook covers every open path, not just openat, and keeps
-     * sys_call_table down to the uid syscalls.
-     */
+		 * The vendor hook covers every open path, not just openat, and keeps
+		 * sys_call_table down to the uid syscalls.
+		 */
 		uidfake_tag_prime(); /* give the processes that already run their tag */
 		return 1;
 	}
 
-	pr_warn("uidfake: could not hook sys_call_table, no hook installed\n");
-	return 0;
+	pr_err("uidfake: syscall hook installation failed: %d\n", ret);
+	return ret;
 }
 
 void hooks_remove(void)
@@ -833,10 +884,8 @@ void hooks_remove(void)
 	/* The apk inodes are ours whatever the table did: put them back first. */
 	uidfake_apk_remove();
 
-	/* nothing was patched means nothing to tear down: there is no fallback */
-	if (!main_table)
-		return;
-
+	/* An LSM hook can be live even when syscall table installation failed. */
+	if (main_table) {
 	unpatch_entries(main_table, g_hook, ARRAY_SIZE(g_hook));
 	if (g_lsm_failed) {
 #ifdef CONFIG_COMPAT
@@ -849,7 +898,7 @@ void hooks_remove(void)
 	compat_table = NULL;
 #endif
 	main_table = NULL;
-
-	/* the identity changes stay covered until the last moment */
+	}
+	/* Always uninstall the LSM hook, even after partial initialization. */
 	uidfake_lsm_remove();
 }

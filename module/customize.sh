@@ -24,21 +24,40 @@ else
 fi
 SYS_LOCALE="${SYS_LOCALE%%,*}"
 case "$SYS_LOCALE" in
+  zh|zh-*|zh_*) UI_LOCALE=zh-CN ;;
   ru|ru-*|ru_*) UI_LOCALE=ru ;;
   *) UI_LOCALE=en ;;
 esac
 if [ -d "$MODPATH/webroot" ]; then
   printf 'window.HMA_UIDFAKE_INSTALL_LOCALE = "%s";\n' "$UI_LOCALE" > "$MODPATH/webroot/locale.js"
 fi
-if [ "$UI_LOCALE" = ru ]; then
+if [ "$UI_LOCALE" = zh-CN ]; then
+  ui_print "- WebUI: 简体中文（跟随 Android 系统语言，可在设置中切换）"
+elif [ "$UI_LOCALE" = ru ]; then
   ui_print "- WebUI: русский (системный язык Android)"
 else
   ui_print "- WebUI: English (Android system language)"
 fi
 
+# The installer must never claim a new version when its KO files are stale.
+# Validate every packaged candidate, not just the KMI currently selected.
+# The manifest is made by Actions from the exact KO bytes in the ZIP.
+. "$MODPATH/load.sh"
+[ -r "$MODPATH/ko/SHA256SUMS" ] ||
+  abort "! KO checksum manifest missing; the installation is incomplete."
+_count=0
+for _ko in "$MODPATH"/ko/*_arm64_hma_uidfake.ko; do
+  [ -f "$_ko" ] || abort "! No KO binaries were unpacked."
+  _count=$((_count + 1))
+  if ! uidfake_check_ko "$MODPATH" "${_ko##*/}"; then
+    abort "! KO checksum mismatch: ${_ko##*/}. Stop; do not reboot into mixed files."
+  fi
+done
+[ "$_count" -eq 9 ] || abort "! Incomplete KO bundle (got $_count; expected 9)."
+ui_print "- KO: all nine packaged binaries passed SHA256 verification."
+
 # Keep every candidate for reboot/OTA re-detection; no .ko.try or manual force path.
 chmod 0755 "$MODPATH/kmi-tool"
-. "$MODPATH/load.sh"
 if uidfake_select "$MODPATH"; then
   uidfake_status "$MODPATH" '[PENDING_REBOOT] KMI identified; reboot required for kernel ABI validation'
   ui_print "- KMI: $_selected_kmi; unmodified module will be checked by the kernel after reboot."
@@ -55,7 +74,12 @@ for f in "$MODPATH"/*.sh; do chmod 0755 "$f"; done
 [ -f "$MODPATH/lkmloader" ] && chmod 0755 "$MODPATH/lkmloader"
 [ -f "$MODPATH/kmi-tool" ] && chmod 0755 "$MODPATH/kmi-tool"
 
-if [ "$UI_LOCALE" = ru ]; then
+if [ "$UI_LOCALE" = zh-CN ]; then
+  ui_print "- 兼容的内核模块将在正常重启后自动加载。"
+  ui_print "- 不需要手动创建 allow_load 标记。"
+  ui_print "- 禁用下次启动：su -c 'touch /data/adb/hma-uidfake/disable_load'"
+  ui_print "- 完成"
+elif [ "$UI_LOCALE" = ru ]; then
   ui_print "- Автозагрузка после одной обычной перезагрузки."
   ui_print "- Ручная активация allow_load не требуется."
   ui_print "- Отключение: su -c 'touch /data/adb/hma-uidfake/disable_load'"

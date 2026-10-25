@@ -3,9 +3,14 @@
  */
 "use strict";
 const HMA_UI_LOCALE = (() => {
+  let preferred = "";
+  try { preferred = localStorage.getItem("hma-uidfake.language") || ""; } catch (e) {}
   const stored = window.HMA_UIDFAKE_INSTALL_LOCALE;
-  const browser = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
-  return /^ru(?:[-_]|$)/i.test(stored || browser) ? "ru" : "en";
+  const browser = (navigator.languages && navigator.languages[0]) || navigator.language || "zh-CN";
+  const locale = preferred || stored || browser;
+  if (/^zh(?:[-_]|$)/i.test(locale)) return "zh-CN";
+  if (/^ru(?:[-_]|$)/i.test(locale)) return "ru";
+  return "en";
 })();
 document.documentElement.lang = HMA_UI_LOCALE;
 const HMA_RU = Object.freeze({
@@ -132,7 +137,23 @@ const HMA_RU = Object.freeze({
   "install: package list unavailable": "Не удалось получить список приложений"
 });
 function t(value) {
-  if (HMA_UI_LOCALE !== "ru" || typeof value !== "string") return value;
+  if (typeof value !== "string") return value;
+  if (HMA_UI_LOCALE === "zh-CN") {
+    const dict = window.HMA_ZH_CN || {};
+    if (Object.prototype.hasOwnProperty.call(dict, value)) return dict[value];
+    let m;
+    if ((m = /^(\d+) apps? with a rule$/.exec(value))) return m[1] + " 个应用已有规则";
+    if ((m = /^(\d+) apps?$/.exec(value))) return m[1] + " 个应用";
+    if ((m = /^(\d+) templates?$/.exec(value))) return m[1] + " 个模板";
+    if ((m = /^(\d+) (listed|selected)$/.exec(value))) return "已选择 " + m[1] + " 项";
+    if ((m = /^version (.+)$/.exec(value))) return "版本 " + m[1];
+    if ((m = /^uid (\d+) · (system|user) app$/.exec(value))) return "UID " + m[1] + " · " + (m[2] === "system" ? "系统应用" : "用户应用");
+    if ((m = /^uid (\d+) · system · (.*)$/.exec(value))) return "UID " + m[1] + " · 系统 · " + t(m[2]);
+    if ((m = /^uid (\d+) · (.*)$/.exec(value))) return "UID " + m[1] + " · " + t(m[2]);
+    if ((m = /^(.+) \+ (\d+) templates?$/.exec(value))) return t(m[1]) + " + " + m[2] + " 个模板";
+    return value;
+  }
+  if (HMA_UI_LOCALE !== "ru") return value;
   if (Object.prototype.hasOwnProperty.call(HMA_RU, value)) return HMA_RU[value];
   const forms = (n, one, few, many) =>
     n % 10 === 1 && n % 100 !== 11 ? one :

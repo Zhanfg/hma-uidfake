@@ -633,7 +633,7 @@ static void policy_publish(struct policy *np)
 	policy_release(old);
 }
 
-void policy_apply(const u32 *pairs, u32 npairs)
+int policy_apply(const u32 *pairs, u32 npairs)
 {
 	struct policy *np;
 	struct layout l = {};
@@ -644,7 +644,7 @@ void policy_apply(const u32 *pairs, u32 npairs)
 
 	np = kzalloc(sizeof(*np), GFP_KERNEL);
 	if (!np)
-		return;
+		return -ENOMEM;
 
 	tmp = kcalloc(POLICY_MAX_PAIRS, sizeof(*tmp), GFP_KERNEL);
 	hid = kcalloc(POLICY_MAX_CALLERS, sizeof(*hid), GFP_KERNEL);
@@ -751,12 +751,13 @@ out:
 	 * policy that is live has fields worth printing. */
 	if (!ok) {
 		kfree(np);
-		return;
+		return -EINVAL;
 	}
 
 	pr_info("uidfake: injected %u pair(s), %u caller(s), %u line(s), %u mask word(s) in %u mask(s), probe %u, %s layout\n",
 		npairs, np->ncallers, np->nlines, np->nmask_words, l.nmasks,
 		np->nprobe, np->mirror ? "uid-hash" : "own-hash");
+	return 0;
 }
 
 /*
@@ -1050,7 +1051,7 @@ void uidfake_tag_note(u32 before_sid, u32 after_sid, u32 old_uid, u32 new_uid)
      */
 		/* The mark, and nothing else: a name that arrives while this is in
 		 * flight is the answer this was racing, and it is never taken away. */
-		if (uf_ti_mark_pending(current))
+		if (uf_ti_mark_pending(current) && UF_DEBUG_ON())
 			pr_info("uidfake: iso birth uid %u marked, awaiting the apk it opens\n",
 				new_uid);
 		return;
@@ -1061,7 +1062,7 @@ void uidfake_tag_note(u32 before_sid, u32 after_sid, u32 old_uid, u32 new_uid)
 	    (new_uid % 100000u) < UF_ISOLATED_START) {
 		const u32 app = (new_uid % 100000u) - UF_APP_MIN;
 
-		if (app < UF_APP_SPAN)
+		if (app < UF_APP_SPAN && UF_DEBUG_ON())
 			pr_info("uidfake: app birth uid %u -> app %u\n",
 				new_uid, app);
 	}
@@ -1545,7 +1546,7 @@ int uidfake_apk_apply(const u32 *blob, u32 len)
 		 * package manager has already let go of is a use-after-free even in a
 		 * diagnostic */
 		inode = igrab(d_backing_inode(p.dentry));
-		g_path_put(&p);
+		/* Keep the dentry pinned until the diagnostic reads its parent. */
 		if (inode != NULL && UF_DEBUG_ON())
 			pr_info("uidfake: apk probe %s: state=%#lx new=%d count=%d dev=%u ino=%lu size=%lld parent=%s\n",
 				path, (unsigned long)inode->i_state,
@@ -1555,6 +1556,7 @@ int uidfake_apk_apply(const u32 *blob, u32 len)
 				(unsigned long)inode->i_ino,
 				(long long)i_size_read(inode),
 				p.dentry->d_parent->d_name.name);
+		g_path_put(&p);
 		if (inode != NULL)
 			iput(inode);
 	}
@@ -1570,7 +1572,7 @@ int uidfake_apk_apply(const u32 *blob, u32 len)
 			const u32 uid = e[1], off = e[2], size = e[3];
 			const char *path;
 
-			if (size == 0 || off < 4u || off + size > len ||
+			if (size == 0 || off < 4u || off > len || size > len - off ||
 			    bytes[off + size - 1u] != '\0')
 				continue;
 			path = (const char *)(bytes + off);

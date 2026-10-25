@@ -225,7 +225,7 @@ function $(id) {
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (text != null) node.textContent = text; /* English function labels remain unchanged */
+  if (text != null) node.textContent = t(text); /* UI text only; config values and package ids are untouched */
   return node;
 }
 
@@ -334,7 +334,7 @@ function searchBar(value, placeholder, onInput) {
   const input = document.createElement("input");
   input.type = "search";
   input.value = value || "";
-  input.placeholder = placeholder;
+  input.placeholder = t(placeholder);
   input.addEventListener("input", () => onInput(input.value));
   box.append(input);
   return box;
@@ -361,7 +361,7 @@ function row(opts) {
   const main = el("div", "main");
   const title = el("div", "title");
   if (Array.isArray(opts.title)) title.append(...opts.title);
-  else title.textContent = opts.title || "";
+  else title.textContent = t(opts.title || "");
   main.append(title);
   if (opts.sub) {
     const sub = el("div", "sub" + (opts.subMono ? " mono" : ""), opts.sub);
@@ -586,7 +586,7 @@ function actionsFor(s) {
 }
 
 function languageText(ru, en) {
-  return HMA_UI_LOCALE === "ru" ? ru : en;
+  return HMA_UI_LOCALE === "ru" ? ru : t(en);
 }
 
 function screenHelpKey(s) {
@@ -612,7 +612,9 @@ function showContextHelp(key) {
   const item = window.HMA_CONTEXT_HELP && window.HMA_CONTEXT_HELP[key];
   if (!item) return;
   const locale = HMA_UI_LOCALE === "ru" ? "ru" : "en";
-  const data = item[locale];
+  const data = HMA_UI_LOCALE === "zh-CN"
+    ? (window.HMA_CONTEXT_HELP_ZH_CN || {})[key] || item.en
+    : item[locale];
   sheet({
     title: data.title,
     infoOnly: true,
@@ -1460,6 +1462,27 @@ function viewPicker(body, param) {
 /* ---- settings, raw, backup, about, help ---- */
 
 function viewSettings(body) {
+  const languageBox = el("div", "card pad");
+  languageBox.append(el("div", "section-title", "Language"));
+  const languageSeg = el("div", "segmented");
+  for (const option of [
+    { id: "zh-CN", label: "简体中文" },
+    { id: "en", label: "English" },
+    { id: "ru", label: "Русский" },
+  ]) {
+    const button = el("button", null, option.label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(HMA_UI_LOCALE === option.id));
+    button.addEventListener("click", () => {
+      if (HMA_UI_LOCALE === option.id) return;
+      try { localStorage.setItem("hma-uidfake.language", option.id); } catch (e) {}
+      window.location.reload();
+    });
+    languageSeg.append(button);
+  }
+  languageBox.append(languageSeg);
+  body.append(languageBox);
+
   const theme = applyTheme();
   const box = el("div", "card pad");
   box.append(el("div", "section-title", "Theme"));
