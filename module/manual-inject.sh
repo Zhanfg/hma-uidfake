@@ -29,6 +29,7 @@ if "$moddir/kmi-tool" manual-load "$moddir/ko/${candidate}_arm64_hma_uidfake.ko"
   echo '[LOADED] Kernel accepted the module; rule synchronization started'
 else
   reason=$(grep -E '^\[(KERNEL_REJECTED|KMI_ERROR)\]' "$moddir/state/manual-load.log" | head -n 1 | cut -c 1-220)
+  reason="${reason}$(uidfake_hook_errno_hint "$reason")"
   uidfake_status "$moddir" "${reason:-[LOAD_FAILED] Manual load rejected}"
   cat "$moddir/state/manual-load.log"
   exit 1
