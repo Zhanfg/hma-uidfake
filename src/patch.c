@@ -309,8 +309,19 @@ int uidfake_patch_init(void)
 			patch_mm, (void *)g_kimage_voffset,
 			(void *)g_memstart_addr, (void *)g_set_fixmap_addr,
 			(void *)g_copy_nofault_addr);
-	if (!patch_mm || !g_set_fixmap_addr)
-		return -ENOENT;
+	/*
+	 * Different errors for independent backend requirements.  In particular,
+	 * a failed module_init errno remains visible to userspace without dmesg.
+	 * Never bypass these requirements or write through an unchecked alias.
+	 */
+	if (!patch_mm) {
+		pr_err("uidfake: init_mm symbol unavailable\n");
+		return -ENXIO;
+	}
+	if (!g_set_fixmap_addr) {
+		pr_err("uidfake: __set_fixmap symbol unavailable\n");
+		return -EOPNOTSUPP;
+	}
 
 	/*
 	 * One calibration, at load: if the walk and the image offset disagree about
