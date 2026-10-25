@@ -1,5 +1,18 @@
 #!/system/bin/sh
 # Shared install/boot selection. Never guess by Linux major.minor or ROM SDK.
+# Optional human-readable hint for the 4 required native syscall table entries.
+# The kernel loader itself may emit the same errno before module_init, so each
+# hint is deliberately phrased as an investigation target, not a conclusion.
+uidfake_hook_errno_hint() {
+  case "$1" in
+    *'errno=38)'*) printf ' [CHECK native:getpriority]' ;;
+    *'errno=42)'*) printf ' [CHECK native:setpriority]' ;;
+    *'errno=61)'*) printf ' [CHECK native:ioprio_get]' ;;
+    *'errno=126)'*) printf ' [CHECK native:ioprio_set]' ;;
+    *'errno=5)'*) printf ' [CHECK syscall patch write/verification]' ;;
+    *) : ;;
+  esac
+}
 uidfake_status() {
   _status_dir="$1"
   _status_reason="$2"
@@ -68,6 +81,7 @@ uidfake_load() {
     return 0
   fi
   _reason="$(head -n 1 "$_moddir/state/kernel-load.log" | cut -c 1-220)"
+  _reason="${_reason}$(uidfake_hook_errno_hint "$_reason")"
   uidfake_status "$_moddir" "${_reason:-[LOAD_FAILED] Module absent after strict load (rc=$_load_rc)}"
   echo '[load] refused/failed; no alternate KMI, patched vermagic or symbol bypass will be attempted'
   return 1
