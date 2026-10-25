@@ -29,6 +29,21 @@ uidfake_status() {
     mv -f "$_status_dir/module.prop.kmi.tmp" "$_status_dir/module.prop"
 }
 
+# Verify installed KO bytes against the full module's build manifest.
+# A newer module.prop with an older KO is a broken partial installation.
+uidfake_check_ko() {
+  _chk_dir="$1"
+  _chk_name="$2"
+  _chk_manifest="$_chk_dir/ko/SHA256SUMS"
+  _chk_file="$_chk_dir/ko/$_chk_name"
+  [ -r "$_chk_manifest" ] && [ -r "$_chk_file" ] || return 1
+  _chk_expected="$(awk -v n="ko/$_chk_name" '$2 == n { cnt++; h=$1 } END { if (cnt == 1) print h }' "$_chk_manifest")"
+  [ "${#_chk_expected}" -eq 64 ] || return 1
+  case "$_chk_expected" in *[!0-9a-f]*) return 1 ;; esac
+  _chk_actual="$(sha256sum "$_chk_file" 2>/dev/null | awk 'NR==1 { print $1 }')"
+  [ "$_chk_actual" = "$_chk_expected" ]
+}
+
 uidfake_select() {
   _select_dir="$1"
   mkdir -p "$_select_dir/state"
@@ -53,6 +68,11 @@ uidfake_select() {
   esac
   UIDFAKE_KO="$_select_dir/ko/${_selected_kmi}_arm64_hma_uidfake.ko"
   [ -f "$UIDFAKE_KO" ] || return 1
+  if ! uidfake_check_ko "$_select_dir" "${_selected_kmi}_arm64_hma_uidfake.ko"; then
+    uidfake_status "$_select_dir" '[KO_INTEGRITY] KO mismatch or missing ko/SHA256SUMS. Reinstall the complete module ZIP and reboot.'
+    echo '[KO_INTEGRITY] Mixed or damaged module; refusing load'
+    return 1
+  fi
   printf '%s\n' "$_selected_kmi" >"$_select_dir/state/selected-kmi"
   echo "[load] $_selected_kmi selected; kernel ABI admission is still required"
   return 0
