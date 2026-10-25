@@ -713,8 +713,10 @@ static int patch_tables(void)
 	unsigned long table = uidfake_lookup("sys_call_table");
 	unsigned int n;
 
-	if (!table)
-		return -ENOENT;
+	if (!table) {
+		pr_err("uidfake: sys_call_table symbol unavailable\n");
+		return -ESRCH;
+	}
 	/* Real addresses go behind the debug key: dmesg is readable on plenty of devices. */
 	if (UF_DEBUG_ON())
 		pr_info("uidfake: sys_call_table=%px locator check: find_user=%px linked=%px\n",
@@ -727,10 +729,16 @@ static int patch_tables(void)
 #endif
 
 	main_table = (uidfake_syscall_t *)table;
+	uidfake_status_note(0);
 	n = patch_entries(main_table, g_hook, ARRAY_SIZE(g_hook), true);
 	if (n != ARRAY_SIZE(g_hook)) {
+		/* ENOSYS = missing required entry, EIO = patch write rejected. */
+		int cause = g_status.last_error == -ENOENT ? -ENOSYS : -EIO;
+
 		unpatch_entries(main_table, g_hook, n);
-		return -EIO;
+		pr_err("uidfake: required native hook installation failed: %d\n",
+		       cause);
+		return cause;
 	}
 	pr_info("uidfake: %u uid syscall(s) hooked in sys_call_table\n", n);
 	uidfake_status_set_hooks(n, 0);
@@ -790,8 +798,12 @@ static int patch_tables(void)
 
 int hooks_install(void)
 {
-	if (uidfake_patch_init())
-		return 0;
+	int ret = uidfake_patch_init();
+
+	if (ret) {
+		pr_err("uidfake: patch backend setup failed: %d\n", ret);
+		return ret;
+	}
 
 	/*
 	 * Where the kernel hands both creds over at the commit, that hook is what the
@@ -817,17 +829,18 @@ int hooks_install(void)
 		}
 	}
 
-	if (!patch_tables()) {
+	ret = patch_tables();
+	if (!ret) {
 		/*
-     * The vendor hook covers every open path, not just openat, and keeps
-     * sys_call_table down to the uid syscalls.
-     */
+		 * The vendor hook covers every open path, not just openat, and keeps
+		 * sys_call_table down to the uid syscalls.
+		 */
 		uidfake_tag_prime(); /* give the processes that already run their tag */
 		return 1;
 	}
 
-	pr_warn("uidfake: could not hook sys_call_table, no hook installed\n");
-	return 0;
+	pr_err("uidfake: syscall hook installation failed: %d\n", ret);
+	return ret;
 }
 
 void hooks_remove(void)
