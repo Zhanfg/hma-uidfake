@@ -2,9 +2,13 @@ name: Axymorrsen optimized KO + module
 on:
   push:
     branches: ["feature/axymorrsen-ko-opt-zhcn"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+
+# The push build is already associated with the PR head commit. Avoid running
+# two full 8-KMI matrices for every change made to the draft PR.
+concurrency:
+  group: hma-uidfake-optimized-${{ github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
