@@ -708,6 +708,32 @@ static void unpatch_entries(uidfake_syscall_t *table, struct hook_entry *e,
 	}
 }
 
+/*
+ * Module init returns only one errno, even on vendor kernels that deny
+ * dmesg/logcat. Preserve the identity of each REQUIRED native syscall slot
+ * without weakening the hook requirement. Each value means "which stage
+ * returned this errno"; it is a clue, not proof of why a symbol was absent.
+ *
+ * 38 ENOSYS: getpriority, 42 ENOMSG: setpriority,
+ * 61 ENODATA: ioprio_get, 126 ENOKEY: ioprio_set.
+ * A kernel-side module-loader failure can independently use these codes.
+ */
+static int uf_missing_native_slot_error(unsigned int slot)
+{
+	switch (slot) {
+	case 0:
+		return -ENOSYS;
+	case 1:
+		return -ENOMSG;
+	case 2:
+		return -ENODATA;
+	case 3:
+		return -ENOKEY;
+	default:
+		return -ENOENT;
+	}
+}
+
 static int patch_tables(void)
 {
 	unsigned long table = uidfake_lookup("sys_call_table");
@@ -732,8 +758,12 @@ static int patch_tables(void)
 	uidfake_status_note(0);
 	n = patch_entries(main_table, g_hook, ARRAY_SIZE(g_hook), true);
 	if (n != ARRAY_SIZE(g_hook)) {
-		/* ENOSYS = missing required entry, EIO = patch write rejected. */
-		int cause = g_status.last_error == -ENOENT ? -ENOSYS : -EIO;
+		/*
+		 * n is the first required native entry that was not installed.
+		 * Distinct errno values permit diagnosis even with kmsg disabled.
+		 */
+		int cause = g_status.last_error == -ENOENT ?
+			uf_missing_native_slot_error(n) : -EIO;
 
 		unpatch_entries(main_table, g_hook, n);
 		pr_err("uidfake: required native hook installation failed: %d\n",
