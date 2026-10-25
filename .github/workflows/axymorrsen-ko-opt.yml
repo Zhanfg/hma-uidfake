@@ -113,6 +113,17 @@ jobs:
           for f in optimized/*.ko; do cp "$f" "packed/ko/$(basename "$f")"; done
           # Preserve original unsupported vendor special build, with disclosure.
           test -s packed/ko/android16-6.12-oneplus-6.12.38_arm64_hma_uidfake.ko
+          # Self-describing build: refuse ZIPs with stale or missing KMI bytes.
+          (cd packed && sha256sum ko/*_arm64_hma_uidfake.ko > ko/SHA256SUMS)
+          test "$(wc -l < packed/ko/SHA256SUMS)" -eq 9
+          (cd packed && sha256sum -c ko/SHA256SUMS)
+          # Validate the same sh function used by installer, boot and WebUI.
+          (
+            . packed/load.sh
+            for f in packed/ko/*_arm64_hma_uidfake.ko; do
+              uidfake_check_ko packed "${f##*/}"
+            done
+          )
           printf '8 generic KO rebuilt. OnePlus 6.12.38 original KO is unmodified. Android device loading is not verified by GitHub Actions.\n' > packed/OPTIMIZATION_STATUS.txt
           printf 'build_commit=%s\nbuild_run=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" >> packed/OPTIMIZATION_STATUS.txt
           (cd packed && zip -qr ../dist/HMA_UIDFake_0.3.16_Axymorrsen_KOOpt.zip .)
