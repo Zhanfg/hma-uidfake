@@ -39,9 +39,25 @@ else
   ui_print "- WebUI: English (Android system language)"
 fi
 
+# The installer must never claim a new version when its KO files are stale.
+# Validate every packaged candidate, not just the KMI currently selected.
+# The manifest is made by Actions from the exact KO bytes in the ZIP.
+. "$MODPATH/load.sh"
+[ -r "$MODPATH/ko/SHA256SUMS" ] ||
+  abort "! KO checksum manifest missing; the installation is incomplete."
+_count=0
+for _ko in "$MODPATH"/ko/*_arm64_hma_uidfake.ko; do
+  [ -f "$_ko" ] || abort "! No KO binaries were unpacked."
+  _count=$((_count + 1))
+  if ! uidfake_check_ko "$MODPATH" "${_ko##*/}"; then
+    abort "! KO checksum mismatch: ${_ko##*/}. Stop; do not reboot into mixed files."
+  fi
+done
+[ "$_count" -eq 9 ] || abort "! Incomplete KO bundle (got $_count; expected 9)."
+ui_print "- KO: all nine packaged binaries passed SHA256 verification."
+
 # Keep every candidate for reboot/OTA re-detection; no .ko.try or manual force path.
 chmod 0755 "$MODPATH/kmi-tool"
-. "$MODPATH/load.sh"
 if uidfake_select "$MODPATH"; then
   uidfake_status "$MODPATH" '[PENDING_REBOOT] KMI identified; reboot required for kernel ABI validation'
   ui_print "- KMI: $_selected_kmi; unmodified module will be checked by the kernel after reboot."
