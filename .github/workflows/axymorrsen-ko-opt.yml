@@ -114,6 +114,7 @@ jobs:
           # Preserve original unsupported vendor special build, with disclosure.
           test -s packed/ko/android16-6.12-oneplus-6.12.38_arm64_hma_uidfake.ko
           printf '8 generic KO rebuilt. OnePlus 6.12.38 original KO is unmodified. Android device loading is not verified by GitHub Actions.\n' > packed/OPTIMIZATION_STATUS.txt
+          printf 'build_commit=%s\nbuild_run=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" >> packed/OPTIMIZATION_STATUS.txt
           (cd packed && zip -qr ../dist/HMA_UIDFake_0.3.16_Axymorrsen_KOOpt.zip .)
           unzip -t dist/*.zip
           test "$(unzip -Z1 dist/*.zip | grep -c '^ko/.*\.ko$')" -eq 9
